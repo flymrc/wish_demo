@@ -158,7 +158,7 @@ def get_product_detail(cookies, cid) ->dict:
 
 
 if __name__ == '__main__':
-    EMAIL = 'reg@ljh.me'
+    EMAIL = 'a@abc.com'
     PASSWORD = '123456'
     PER_CATEGORY_ENTRIES_TO_SCRAPE = 20
 
