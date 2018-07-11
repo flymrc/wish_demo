@@ -2,6 +2,7 @@ import time
 import re
 import json
 import urllib.parse
+from itertools import zip_longest
 import requests
 
 
@@ -73,27 +74,42 @@ def parse_category_json(json_data, category) ->list:
         return results
 
 
-def parse_product_json(json_data) ->list:
+def parse_product_json(json_data, category) ->list:
     contest = json_data['data']['contest']
     title = contest['meta_title']
     description = contest['description']
     contest_selected_picture = contest['contest_selected_picture']
+    extra_photo_urls = contest['extra_photo_urls'].values()
+    if extra_photo_urls:
+        extra_photo_urls = list(extra_photo_urls)
+        extra_photo_urls = list(map(lambda s: re.sub(r'small', 'large', s), extra_photo_urls))
+        extra_photo_urls.insert(0, contest_selected_picture)
+    else:
+        extra_photo_urls = [contest_selected_picture]
 
     results = []
     commerce_product_info = contest['commerce_product_info']['variations']
-    for rec in commerce_product_info:
-        merchant = rec['merchant']
-        color = rec['color']
-        size = rec['size']
-        price = rec['price']
-        retail_price = rec['retail_price']
-        inventory = rec['inventory']
-
+    rows = list(zip_longest(commerce_product_info, extra_photo_urls[:len(commerce_product_info)]))
+    position = 1
+    for index, row in enumerate(rows, start=1):
+        if row[0] is None:
+            break
+        price = row[0]['price']
+        if index == 1 and int(price) <= 12:
+            break
+        elif int(price) <= 12:
+            continue
+        color = row[0]['color'] if row[0]['color'] else ''
+        size = row[0]['size']
+        retail_price = row[0]['retail_price']
+        inventory = row[0]['inventory']
+        image_link = row[1] if row[1] else ''
         results.append({
+            "Collection": category,
             "Handle": title.lower(),
             "Title": title,
             "Body (HTML)": description,
-            "Vendor": merchant,
+            "Vendor": 'ThePicksmart',
             "Type": "",
             "Tags": "",
             "Published": True,
@@ -114,8 +130,8 @@ def parse_product_json(json_data) ->list:
             "Variant Requires Shipping": False,
             "Variant Taxable": False,
             "Variant Barcode": "",
-            "Image Src": contest_selected_picture,
-            "Image Position": 1,
+            "Image Src": image_link,
+            "Image Position": position if image_link else '',
             "Image Alt Text": "",
             "Gift Card": False,
             "SEO Title": "",
@@ -135,12 +151,12 @@ def parse_product_json(json_data) ->list:
                 " Custom Label 3": "",
                 " Custom Label 4": ""
             },
-            "Variant Image": contest_selected_picture,
+            "Variant Image": "",
             "Variant Weight Unit": "kg",
             "Variant Tax Code": ""
         })
-    else:
-        return results
+        position += 1
+    return results
 
 
 def get_product_detail(cookies, cid) ->dict:
@@ -158,7 +174,7 @@ def get_product_detail(cookies, cid) ->dict:
 
 
 if __name__ == '__main__':
-    EMAIL = 'a@abc.com'
+    EMAIL = 'reg@ljh.me'
     PASSWORD = '123456'
     PER_CATEGORY_ENTRIES_TO_SCRAPE = 20
 
@@ -182,23 +198,19 @@ if __name__ == '__main__':
     cookies = get_xsrf()
     login_cookies = get_login_session(EMAIL, PASSWORD, cookies)
 
-    category_results = []
     for category_id in categories_id:
         json_data = get_filtered_feed(category_id, login_cookies)
-        category_results.extend(parse_category_json(json_data, categories_id[category_id]))
+        category = categories_id[category_id]
+        category_results = parse_category_json(json_data, category)
         print(categories_id[category_id] + ' download.')
-        # break
-    #     time.sleep(3)
-    # else:
-    #     with open('results.json', 'w') as f:
-    #         json.dump(results, f)
 
-    product_results = []
-    for rec in category_results:
-        cid = rec['cid']
-        print('\t[%s]product detail download.' % cid)
-        product_json = get_product_detail(login_cookies, cid)
-        product_results.extend(parse_product_json(product_json))
-    else:
-        with open('convertcsv.json', 'w') as f:
-            json.dump(product_results, f)
+        product_results = []
+        for rec in category_results:
+            cid = rec['cid']
+            print('\t[%s] product detail download.' % cid)
+            product_json = get_product_detail(login_cookies, cid)
+            product_results.extend(parse_product_json(product_json, category))
+        else:
+            with open(category + '.json', 'w') as f:
+                json.dump(product_results, f)
+        # break
