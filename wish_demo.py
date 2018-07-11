@@ -37,13 +37,8 @@ def get_login_session(email, password, cookies) ->dict:
     return cookies
 
 
-def get_filtered_feed(request_id, cookies, count=20) ->dict:
+def get_filtered_feed(cid, cookies, page, count) ->dict:
     feed_link = 'https://www.wish.com/api/feed/get-filtered-feed'
-    payload = urllib.parse.urlencode({
-        'count': count, 'offset': 0,
-        'request_categories': False, 'request_branded_filter': False,
-        'request_id': request_id,
-    })
     headers = {
         'Accept': "application/json, text/plain, */*",
         'Content-Type': "application/x-www-form-urlencoded",
@@ -51,8 +46,44 @@ def get_filtered_feed(request_id, cookies, count=20) ->dict:
         'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.162 Safari/537.36",
         'X-XSRFToken': cookies.get('_xsrf'),
     }
-    resp = requests.post(feed_link, data=payload, headers=headers, cookies=cookies)
-    return resp.json()
+    for i in range(page):
+        payload = urllib.parse.urlencode({
+            'count': count, 'offset': i * count,
+            'request_categories': False, 'request_branded_filter': False,
+            'request_id': cid,
+        })
+        while True:
+            try:
+                resp = requests.post(feed_link, data=payload, headers=headers, cookies=cookies, timeout=180)
+            except Exception as e:
+                time.sleep(60)
+                print('ERROR: %s\nSLEEP 60s...' % e)
+                continue
+            else:
+                yield resp.json()
+                break
+
+
+def get_product_detail(cookies, cid) ->dict:
+    url = "https://www.wish.com/api/product/get"
+    payload = urllib.parse.urlencode({'cid': cid, 'request_sizing_chart_info': True, 'do_not_track': True})
+    headers = {
+        'Accept': "application/json, text/plain, */*",
+        'Content-Type': "application/x-www-form-urlencoded",
+        'Referer': "https://www.wish.com/feed/tabbed_feed_latest/product/" + cid,
+        'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.162 Safari/537.36",
+        'X-XSRFToken': cookies.get('_xsrf'),
+    }
+
+    while True:
+        try:
+            resp = requests.post(url, data=payload, headers=headers, cookies=cookies, timeout=180)
+        except Exception as e:
+            time.sleep(60)
+            print('ERROR: %s\nSLEEP 60s...' % e)
+            continue
+        else:
+            return resp.json()
 
 
 def parse_category_json(json_data, category) ->list:
@@ -74,10 +105,10 @@ def parse_category_json(json_data, category) ->list:
         return results
 
 
-def parse_product_json(json_data, category) ->list:
+def parse_product_json(json_data, category, price_flag) ->list:
     contest = json_data['data']['contest']
     title = contest['meta_title']
-    description = contest['description']
+    description =  "<p class=\"additional-description\">" + contest['description'].replace('\n','<br>') + "</p >"
     contest_selected_picture = contest['contest_selected_picture']
     extra_photo_urls = contest['extra_photo_urls'].values()
     if extra_photo_urls:
@@ -95,12 +126,12 @@ def parse_product_json(json_data, category) ->list:
         if row[0] is None:
             break
         price = row[0]['price']
-        if index == 1 and int(price) <= 12:
+        if index == 1 and int(price) <= price_flag:
             break
-        elif int(price) <= 12:
+        elif int(price) <= price_flag:
             continue
         color = row[0]['color'] if row[0]['color'] else ''
-        size = row[0]['size']
+        size = row[0]['size'] if row[0]['size'] else ''
         retail_price = row[0]['retail_price']
         inventory = row[0]['inventory']
         image_link = row[1] if row[1] else ''
@@ -113,9 +144,9 @@ def parse_product_json(json_data, category) ->list:
             "Type": "",
             "Tags": "",
             "Published": True,
-            "Option1 Name": "Size",
+            "Option1 Name": "Size" if size else '',
             "Option1 Value": size,
-            "Option2 Name": "Color",
+            "Option2 Name": "Color" if color else '',
             "Option2 Value": color,
             "Option3 Name": "",
             "Option3 Value": "",
@@ -159,39 +190,27 @@ def parse_product_json(json_data, category) ->list:
     return results
 
 
-def get_product_detail(cookies, cid) ->dict:
-    url = "https://www.wish.com/api/product/get"
-    payload = urllib.parse.urlencode({'cid': cid, 'request_sizing_chart_info': True, 'do_not_track': True})
-    headers = {
-        'Accept': "application/json, text/plain, */*",
-        'Content-Type': "application/x-www-form-urlencoded",
-        'Referer': "https://www.wish.com/feed/tabbed_feed_latest/product/" + cid,
-        'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.162 Safari/537.36",
-        'X-XSRFToken': cookies.get('_xsrf'),
-    }
-    resp = requests.post(url, data=payload, headers=headers, cookies=cookies)
-    return resp.json()
-
-
 if __name__ == '__main__':
     EMAIL = 'reg@ljh.me'
     PASSWORD = '123456'
-    PER_CATEGORY_ENTRIES_TO_SCRAPE = 20
+    COUNT = 50
+    PAGE = 20
+    PRICE_FLAG = 20
 
     categories_id = {
-        'tag_53dc186321a86318bdc87ef8': 'Fashion',
-        'tag_53dc186421a86318bdc87f20': 'Gadgets',
-        'tag_53dc314721a86346c126eaec': 'Sports & Outdoors',
-        'tag_53dc186321a86318bdc87ef9': 'Tops',
-        'tag_53dc186321a86318bdc87f07': 'Bottoms',
-        'tag_53dc186421a86318bdc87f1c': 'Watches',
-        'tag_53dc186421a86318bdc87f31': 'Shoes',
-        'tag_5899202d6fa88c49f7c6bb5d': 'Automotive',
-        'tag_53dc2e9e21a86346c126eae4': 'Underwear',
-        'tag_53dc186421a86318bdc87f22': 'Wallets & Bags',
-        'tag_53dc186421a86318bdc87f16': 'Accessories',
-        'tag_54ac6e18f8a0b3724c6c473f': 'Hobbies',
-        'tag_53dc186421a86318bdc87f0f': 'Phone Upgrades',
+        # 'tag_53dc186321a86318bdc87ef8': 'Fashion',
+        # 'tag_53dc186421a86318bdc87f20': 'Gadgets',
+        # 'tag_53dc314721a86346c126eaec': 'Sports & Outdoors',
+        # 'tag_53dc186321a86318bdc87ef9': 'Tops',
+        # 'tag_53dc186321a86318bdc87f07': 'Bottoms',
+        # 'tag_53dc186421a86318bdc87f1c': 'Watches',
+        # 'tag_53dc186421a86318bdc87f31': 'Shoes',
+        # 'tag_5899202d6fa88c49f7c6bb5d': 'Automotive',
+        # 'tag_53dc2e9e21a86346c126eae4': 'Underwear',
+        # 'tag_53dc186421a86318bdc87f22': 'Wallets & Bags',
+        # 'tag_53dc186421a86318bdc87f16': 'Accessories',
+        # 'tag_54ac6e18f8a0b3724c6c473f': 'Hobbies',
+        # 'tag_53dc186421a86318bdc87f0f': 'Phone Upgrades',
         'tag_53e9157121a8633c567eb0c2': 'Home Decor',
     }
 
@@ -199,17 +218,20 @@ if __name__ == '__main__':
     login_cookies = get_login_session(EMAIL, PASSWORD, cookies)
 
     for category_id in categories_id:
-        json_data = get_filtered_feed(category_id, login_cookies)
+        generator_json_data = get_filtered_feed(category_id, login_cookies, PAGE, COUNT)
         category = categories_id[category_id]
-        category_results = parse_category_json(json_data, category)
-        print(categories_id[category_id] + ' download.')
 
         product_results = []
-        for rec in category_results:
-            cid = rec['cid']
-            print('\t[%s] product detail download.' % cid)
-            product_json = get_product_detail(login_cookies, cid)
-            product_results.extend(parse_product_json(product_json, category))
+        for index, json_data in enumerate(generator_json_data, start=1):
+            print(category + ' download page %d.' % index)
+            category_results = parse_category_json(json_data, category)
+
+            for rec in category_results:
+                cid = rec['cid']
+                print('\t[%s] product detail download.' % cid)
+                product_json = get_product_detail(login_cookies, cid)
+                time.sleep(3)
+                product_results.extend(parse_product_json(product_json, category, PRICE_FLAG))
         else:
             with open(category + '.json', 'w') as f:
                 json.dump(product_results, f)
