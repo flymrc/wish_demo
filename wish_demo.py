@@ -4,6 +4,7 @@ import json
 import urllib.parse
 from itertools import zip_longest
 import requests
+import traceback
 
 
 def get_xsrf() ->dict:
@@ -96,8 +97,8 @@ def parse_category_json(json_data, category) ->list:
             quantity = product['feed_tile_text']
             currency = product['localized_value']['symbol']
             price = product['commerce_product_info']['logging_fields']['log_product_price']
-        except Exception as e:
-            print(e)
+        except KeyError as e:
+            # print('KeyError: ' + str(e))
             continue
         rec = {'cid': cid, "link": link, "price": currency + price, "quantity": quantity, "category": category}
         results.append(rec)
@@ -156,8 +157,8 @@ def parse_product_json(json_data, category, price_flag) ->list:
             "Variant Inventory Qty": inventory,
             "Variant Inventory Policy": "deny",
             "Variant Fulfillment Service": "manual",
-            "Variant Price": price,
-            "Variant Compare At Price": retail_price,
+            "Variant Price": (price + 14) * 2,
+            "Variant Compare At Price": round(retail_price / 0.7),
             "Variant Requires Shipping": False,
             "Variant Taxable": False,
             "Variant Barcode": "",
@@ -193,9 +194,9 @@ def parse_product_json(json_data, category, price_flag) ->list:
 if __name__ == '__main__':
     EMAIL = 'reg@ljh.me'
     PASSWORD = '123456'
-    COUNT = 50
-    PAGE = 20
-    PRICE_FLAG = 20
+    COUNT = 20 # 每页显示数据量
+    PAGE = 25 # 每个类型翻页数量
+    PRICE_FLAG = 20 # 保留价格大于20的数据
 
     categories_id = {
         # 'tag_53dc186321a86318bdc87ef8': 'Fashion',
@@ -218,21 +219,28 @@ if __name__ == '__main__':
     login_cookies = get_login_session(EMAIL, PASSWORD, cookies)
 
     for category_id in categories_id:
-        generator_json_data = get_filtered_feed(category_id, login_cookies, PAGE, COUNT)
+        generator_categories_json_data = get_filtered_feed(category_id, login_cookies, PAGE, COUNT)
         category = categories_id[category_id]
 
-        product_results = []
-        for index, json_data in enumerate(generator_json_data, start=1):
-            print(category + ' download page %d.' % index)
-            category_results = parse_category_json(json_data, category)
-
-            for rec in category_results:
-                cid = rec['cid']
-                print('\t[%s] product detail download.' % cid)
-                product_json = get_product_detail(login_cookies, cid)
-                time.sleep(3)
-                product_results.extend(parse_product_json(product_json, category, PRICE_FLAG))
-        else:
-            with open(category + '.json', 'w') as f:
-                json.dump(product_results, f)
-        # break
+        with open(category + '.json', 'w') as f:
+            f.write('[')
+        try:
+            for index, json_data in enumerate(generator_categories_json_data, start=1):
+                print(category + ' download page %d.' % index)
+                category_results = parse_category_json(json_data, category)
+                for rec in category_results:
+                    cid = rec['cid']
+                    print('\t[%s] product detail download.' % cid)
+                    product_json = get_product_detail(login_cookies, cid)
+                    # 限速在这里
+                    time.sleep(3)
+                    product_results = parse_product_json(product_json, category, PRICE_FLAG)
+                    if product_results:
+                        with open(category + '.json', 'a+') as f:
+                            f.write(json.dumps(product_results)[1:-1] + ',')
+        except:
+            traceback.print_exc()
+        finally:
+            with open(category + '.json', 'rb+') as f:
+                f.seek(-1, 2)
+                f.write(b']')
